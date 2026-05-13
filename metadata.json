@@ -1,0 +1,9 @@
+{
+  "name": "Scanory",
+  "description": "A mobile-first barcode scanner application to look up UPCs, geo-tag scans, and manage a personal inventory.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}
