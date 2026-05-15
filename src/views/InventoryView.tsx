@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAppStore } from '../store';
-import { Box, Plus, Minus, Trash2, Search, ArrowDownAZ, ArrowUpZA, Clock, CalendarDays, ArrowUpDown, CheckSquare, Square, CheckCircle2, Circle } from 'lucide-react';
+import { Box, Plus, Minus, Trash2, Search, ArrowDownAZ, ArrowUpZA, Clock, CalendarDays, ArrowUpDown, CheckSquare, Square, CheckCircle2, Circle, Share } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ProductDetailView } from './ProductDetailView';
 
@@ -78,6 +78,32 @@ export function InventoryView() {
     }
   };
 
+  const handleShare = async () => {
+    if (inventory.length === 0) return;
+
+    const summary = inventory.map(item => {
+      return `- ${item.product.name} (UPC: ${item.product.upc}) - Quantity: ${item.quantity}`;
+    }).join('\n');
+
+    const shareText = `Inventory Summary:\n\n${summary}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'My Inventory',
+          text: shareText,
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name !== 'AbortError') {
+          console.error('Error sharing:', err);
+        }
+      }
+    } else {
+      navigator.clipboard.writeText(shareText);
+      alert('Inventory copied to clipboard!');
+    }
+  };
+
   if (selectedItem) {
     return <ProductDetailView item={selectedItem} onBack={() => setSelectedItemId(null)} />;
   }
@@ -92,6 +118,13 @@ export function InventoryView() {
           </div>
           {inventory.length > 0 && !isBulkEditMode && (
             <div className="flex gap-2">
+              <button
+                onClick={handleShare}
+                className="p-2 rounded-lg transition-colors bg-white border border-gray-200 text-indigo-600 hover:bg-gray-50"
+                aria-label="Share inventory"
+              >
+                <Share className="w-5 h-5" />
+              </button>
               <button
                 onClick={() => setShowFilters(!showFilters)}
                 className={`p-2 rounded-lg transition-colors ${showFilters ? 'bg-indigo-100 text-indigo-700' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Scanner } from '../components/Scanner';
 import { lookupUPC } from '../lib/api';
 import { useAppStore, ProductData, LocationData } from '../store';
-import { Loader2, MapPin, PackagePlus, Info, ChevronDown, ChevronUp, CheckCircle2 } from 'lucide-react';
+import { Loader2, MapPin, PackagePlus, Info, ChevronDown, ChevronUp, CheckCircle2, Search } from 'lucide-react';
 
 export function ScanView() {
   const [isScanning, setIsScanning] = useState(true);
@@ -11,6 +11,7 @@ export function ScanView() {
   const [scannedProduct, setScannedProduct] = useState<ProductData | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [scannedCode, setScannedCode] = useState<string | null>(null);
+  const [manualUPC, setManualUPC] = useState('');
   
   const addScan = useAppStore((state) => state.addScan);
   const addToInventory = useAppStore((state) => state.addToInventory);
@@ -72,6 +73,7 @@ export function ScanView() {
   const handleReset = () => {
     setScannedProduct(null);
     setScannedCode(null);
+    setManualUPC('');
     setShowDetails(false);
     setIsScanning(true);
   };
@@ -85,23 +87,51 @@ export function ScanView() {
 
       <div className="flex-1 flex flex-col justify-center">
         {isScanning ? (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="relative">
-            <Scanner onScan={handleScan} isScanning={isScanning} />
-            <AnimatePresence>
-              {scannedCode && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm rounded-2xl"
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col gap-6">
+            <div className="relative">
+              <Scanner onScan={handleScan} isScanning={isScanning} />
+              <AnimatePresence>
+                {scannedCode && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm rounded-2xl"
+                  >
+                    <div className="bg-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3">
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
+                      <span className="text-2xl font-bold font-mono tracking-wider text-gray-900">{scannedCode}</span>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            
+            <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+              <label htmlFor="manual-upc" className="block text-sm font-medium text-gray-700 mb-2">Or enter UPC manually</label>
+              <div className="flex gap-2">
+                <input
+                  id="manual-upc"
+                  type="text"
+                  placeholder="e.g. 012345678905"
+                  value={manualUPC}
+                  onChange={(e) => setManualUPC(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && manualUPC.trim()) {
+                      handleScan(manualUPC.trim());
+                    }
+                  }}
+                  className="flex-1 block w-full rounded-xl border border-gray-200 px-4 py-3 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-shadow font-mono"
+                />
+                <button
+                  onClick={() => handleScan(manualUPC.trim())}
+                  disabled={!manualUPC.trim() || isLookingUp}
+                  className="bg-indigo-600 text-white px-5 py-3 rounded-xl hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                 >
-                  <div className="bg-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3">
-                    <CheckCircle2 className="w-6 h-6 text-green-500" />
-                    <span className="text-2xl font-bold font-mono tracking-wider text-gray-900">{scannedCode}</span>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  <Search className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
           </motion.div>
         ) : null}
 

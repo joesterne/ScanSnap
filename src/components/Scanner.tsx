@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { Camera, RefreshCw, ImagePlus } from 'lucide-react';
+import { Camera, RefreshCw, ImagePlus, SwitchCamera, Flashlight, FlashlightOff } from 'lucide-react';
 
 interface ScannerProps {
   onScan: (decodedText: string) => void;
@@ -13,6 +13,13 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
   const [error, setError] = useState<string>('');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>(() => {
+    const saved = localStorage.getItem('scanner_facingMode');
+    return (saved === 'user' || saved === 'environment') ? saved : 'environment';
+  });
+  const [isTorchOn, setIsTorchOn] = useState(() => {
+    return localStorage.getItem('scanner_isTorchOn') === 'true';
+  });
 
   useEffect(() => {
     let isSubscribed = true;
@@ -27,6 +34,14 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
           }
         }
         return;
+      }
+
+      try {
+        if (html5QrCode.current && html5QrCode.current.isScanning) {
+          await html5QrCode.current.stop();
+        }
+      } catch (e) {
+        console.error('Failed to stop scanner before restart.', e);
       }
 
       try {
@@ -50,7 +65,7 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
 
           if (!html5QrCode.current.isScanning) {
             await html5QrCode.current.start(
-              { facingMode: 'environment' },
+              { facingMode },
               {
                 fps: 10,
                 qrbox: { width: 250, height: 150 },
@@ -63,6 +78,19 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
                 // Ignore frequent scan failures
               }
             );
+
+            // Re-apply torch state if it was on
+            if (isTorchOn && facingMode === 'environment') {
+              try {
+                await html5QrCode.current.applyVideoConstraints({
+                  advanced: [{ torch: true } as any]
+                });
+              } catch (err) {
+                console.warn('Torch not supported or failed to re-apply', err);
+                setIsTorchOn(false);
+                localStorage.setItem('scanner_isTorchOn', 'false');
+              }
+            }
           }
         } else {
           if (isSubscribed) {
@@ -86,7 +114,25 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
         html5QrCode.current.stop().catch(console.error);
       }
     };
-  }, [isScanning, onScan, nonce]);
+  }, [isScanning, onScan, nonce, facingMode]);
+
+  const toggleTorch = async () => {
+    if (html5QrCode.current && html5QrCode.current.isScanning) {
+      try {
+        const newTorchState = !isTorchOn;
+        await html5QrCode.current.applyVideoConstraints({
+          advanced: [{ torch: newTorchState } as any]
+        });
+        setIsTorchOn(newTorchState);
+        localStorage.setItem('scanner_isTorchOn', String(newTorchState));
+      } catch (err) {
+        console.error('Failed to toggle torch', err);
+        alert('Flashlight is not supported on this device/browser.');
+        setIsTorchOn(false);
+        localStorage.setItem('scanner_isTorchOn', 'false');
+      }
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -153,12 +199,34 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
         </div>
       </div>
 
-      <div className="absolute bottom-6 left-0 right-0 flex justify-center z-20">
+      <div className="absolute bottom-6 left-0 right-0 flex justify-center z-20 gap-3">
         <label className="bg-black/60 backdrop-blur-md text-white px-5 py-2.5 rounded-full flex items-center gap-2 cursor-pointer border border-white/20 hover:bg-black/80 transition shadow-lg">
           <ImagePlus className="w-5 h-5" />
           <span className="text-sm font-medium">Scan Photo</span>
           <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
         </label>
+
+        <button 
+          onClick={() => {
+            const nextMode = facingMode === 'environment' ? 'user' : 'environment';
+            setFacingMode(nextMode);
+            localStorage.setItem('scanner_facingMode', nextMode);
+          }}
+          className="bg-black/60 backdrop-blur-md text-white px-4 py-2.5 rounded-full flex items-center gap-2 border border-white/20 hover:bg-black/80 transition shadow-lg"
+          aria-label="Switch Camera"
+        >
+          <SwitchCamera className="w-5 h-5" />
+        </button>
+
+        {facingMode === 'environment' && (
+          <button 
+            onClick={toggleTorch}
+            className={`bg-black/60 backdrop-blur-md px-4 py-2.5 rounded-full flex items-center gap-2 border transition shadow-lg ${isTorchOn ? 'text-yellow-400 border-yellow-400/50' : 'text-white border-white/20 hover:bg-black/80'}`}
+            aria-label="Toggle Flashlight"
+          >
+            {isTorchOn ? <Flashlight className="w-5 h-5" /> : <FlashlightOff className="w-5 h-5" />}
+          </button>
+        )}
       </div>
     </div>
   );
