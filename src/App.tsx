@@ -1,23 +1,30 @@
-import { useState } from 'react';
-import { BottomNav, type TabType } from './components/BottomNav';
-import { ScanView } from './views/ScanView';
-import { HistoryView } from './views/HistoryView';
-import { InventoryView } from './views/InventoryView';
+import React, { useState } from 'react';
+import { Scanner } from './components/Scanner';
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<TabType>('scan');
+function App() {
+  const [scanning, setScanning] = useState(true);
+  const [result, setResult] = useState('');
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-white text-gray-900 font-sans overflow-hidden sm:max-w-md sm:mx-auto sm:border-x sm:border-gray-200">
-      {/* Dynamic View container */}
-      <div className="flex-1 overflow-hidden flex flex-col relative w-full h-full">
-        {activeTab === 'scan' && <ScanView />}
-        {activeTab === 'history' && <HistoryView />}
-        {activeTab === 'inventory' && <InventoryView />}
-      </div>
+    <div className="min-h-screen bg-gray-100 p-8 flex flex-col items-center gap-6">
+      <h1 className="text-2xl font-bold">Scanner App</h1>
+      
+      {result && (
+        <div className="p-4 bg-white shadow rounded-lg w-full max-w-lg text-center font-mono">
+          Last Scan: {result}
+        </div>
+      )}
 
-      {/* Navigation */}
-      <BottomNav activeTab={activeTab} onChange={setActiveTab} />
+      <button 
+        onClick={() => setScanning(!scanning)}
+        className="px-6 py-2 bg-blue-600 text-white rounded-lg"
+      >
+        {scanning ? 'Stop Scanning' : 'Start Scanning'}
+      </button>
+
+      <Scanner isScanning={scanning} onScan={(text) => setResult(text)} />
     </div>
   );
 }
+
+export default App;

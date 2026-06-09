@@ -7,9 +7,9 @@ interface ScannerProps {
   isScanning: boolean;
 }
 
-export function Scanner({ onScan, isScanning }: ScannerProps) {
-  const scannerRef = useRef<HTMLDivElement>(null);
+export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
   const html5QrCode = useRef<Html5Qrcode | null>(null);
+  const isTransitioning = useRef(false);
   const [error, setError] = useState<string>('');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -21,23 +21,26 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
     return localStorage.getItem('scanner_isTorchOn') === 'true';
   });
 
+  const onScanRef = useRef(onScan);
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
   useEffect(() => {
     let isSubscribed = true;
 
-    async function setupScanner() {
-      if (!isScanning) {
-        if (html5QrCode.current && html5QrCode.current.isScanning) {
-          try {
-            await html5QrCode.current.stop();
-          } catch (e) {
-            console.error('Failed to stop scanner.', e);
-          }
-        }
-        return;
+    const startScanner = async () => {
+      if (!isScanning) return;
+      
+      while (isTransitioning.current) {
+        await new Promise(r => setTimeout(r, 100));
       }
+      if (!isSubscribed) return;
+      
+      isTransitioning.current = true;
 
       try {
-        if (html5QrCode.current && html5QrCode.current.isScanning) {
+        if (html5QrCode.current?.isScanning) {
           await html5QrCode.current.stop();
         }
       } catch (e) {
@@ -48,19 +51,9 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
         const devices = await Html5Qrcode.getCameras();
         if (devices && devices.length > 0) {
           if (isSubscribed) setHasPermission(true);
-          
+
           if (!html5QrCode.current) {
-            html5QrCode.current = new Html5Qrcode('qr-reader', {
-              verbose: false,
-              formatsToSupport: [
-                Html5QrcodeSupportedFormats.UPC_A,
-                Html5QrcodeSupportedFormats.UPC_E,
-                Html5QrcodeSupportedFormats.EAN_13,
-                Html5QrcodeSupportedFormats.EAN_8,
-                Html5QrcodeSupportedFormats.CODE_128,
-                Html5QrcodeSupportedFormats.CODE_39,
-              ],
-            });
+            html5QrCode.current = new Html5Qrcode('reader');
           }
 
           if (!html5QrCode.current.isScanning) {
@@ -68,11 +61,35 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
               { facingMode },
               {
                 fps: 10,
-                qrbox: { width: 250, height: 150 },
-                aspectRatio: 1.0,
               },
               (decodedText) => {
-                onScan(decodedText);
+                if (isSubscribed) {
+                  // Haptic feedback
+                  if (window.navigator && window.navigator.vibrate) {
+                    window.navigator.vibrate(100);
+                  }
+                  
+                  // Audio beep
+                  try {
+                    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    
+                    oscillator.type = 'sine';
+                    oscillator.frequency.value = 800;
+                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    
+                    oscillator.start(audioCtx.currentTime);
+                    oscillator.stop(audioCtx.currentTime + 0.1);
+                  } catch (e) {
+                    console.warn('Audio feedback failed', e);
+                  }
+
+                  onScanRef.current(decodedText);
+                }
               },
               (errorMessage) => {
                 // Ignore frequent scan failures
@@ -95,26 +112,42 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
         } else {
           if (isSubscribed) {
             setHasPermission(false);
-            setError('No cameras found.');
+            setError('No camera found on this device');
           }
         }
-      } catch (err: any) {
+      } catch (err) {
+        console.error(err);
         if (isSubscribed) {
           setHasPermission(false);
-          setError(err?.message || 'Error accessing camera.');
+          setError('Camera permission denied or camera is in use by another application');
         }
+      } finally {
+        isTransitioning.current = false;
       }
-    }
+    };
 
-    setupScanner();
+    startScanner();
 
     return () => {
       isSubscribed = false;
-      if (html5QrCode.current && html5QrCode.current.isScanning) {
-        html5QrCode.current.stop().catch(console.error);
-      }
+      const stopScanner = async () => {
+        while (isTransitioning.current) {
+          await new Promise(r => setTimeout(r, 100));
+        }
+        isTransitioning.current = true;
+        try {
+          if (html5QrCode.current?.isScanning) {
+            await html5QrCode.current.stop();
+          }
+        } catch (e) {
+          console.error('Failed to stop scanner on cleanup.', e);
+        } finally {
+          isTransitioning.current = false;
+        }
+      };
+      stopScanner();
     };
-  }, [isScanning, onScan, nonce, facingMode]);
+  }, [isScanning, nonce, facingMode]);
 
   const toggleTorch = async () => {
     if (html5QrCode.current && html5QrCode.current.isScanning) {
@@ -137,73 +170,94 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      try {
-        setError('');
-        if (html5QrCode.current && html5QrCode.current.isScanning) {
-          await html5QrCode.current.stop();
-        }
-        
-        if (!html5QrCode.current) {
-          html5QrCode.current = new Html5Qrcode('qr-reader', {
-            verbose: false,
-            formatsToSupport: [
-               Html5QrcodeSupportedFormats.UPC_A,
-               Html5QrcodeSupportedFormats.UPC_E,
-               Html5QrcodeSupportedFormats.EAN_13,
-               Html5QrcodeSupportedFormats.EAN_8,
-               Html5QrcodeSupportedFormats.CODE_128,
-               Html5QrcodeSupportedFormats.CODE_39,
-            ]
-          });
-        }
-        
-        const decodedText = await html5QrCode.current.scanFile(file, true);
-        onScan(decodedText);
-      } catch (err: any) {
-        console.error('File scan error:', err);
-        setError('No barcode found in image.');
-        setNonce(n => n + 1); // restart camera
+      if (!html5QrCode.current) {
+        html5QrCode.current = new Html5Qrcode('reader');
       }
-      e.target.value = '';
+      try {
+        const decodedText = await html5QrCode.current.scanFile(file, true);
+        
+        // Success feedback
+        if (window.navigator && window.navigator.vibrate) {
+          window.navigator.vibrate(100);
+        }
+        try {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const oscillator = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+          oscillator.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+          oscillator.type = 'sine';
+          oscillator.frequency.value = 800;
+          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          oscillator.start(audioCtx.currentTime);
+          oscillator.stop(audioCtx.currentTime + 0.1);
+        } catch (err) {
+          console.warn('Audio feedback failed', err);
+        }
+
+        onScanRef.current(decodedText);
+      } catch (err) {
+        setError('Could not read barcode from image. Please try another.');
+      }
     }
   };
 
   if (!isScanning) return null;
 
   return (
-    <div className="relative w-full max-w-sm mx-auto overflow-hidden rounded-2xl bg-black shadow-xl aspect-[3/4] sm:aspect-square">
-      {hasPermission === false && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 text-white bg-gray-900">
-          <Camera className="w-12 h-12 mb-4 text-gray-500" />
-          <p className="text-sm font-medium mb-2">Camera Access Denied</p>
-          <p className="text-xs text-gray-400">
-            {error || 'Please allow camera access in your browser to scan barcodes.'}
-          </p>
-        </div>
-      )}
+    <div className="relative overflow-hidden rounded-2xl bg-black aspect-[4/3] w-full max-w-lg mx-auto shadow-2xl ring-1 ring-black/5">
+      <div id="reader" className="w-full h-full" />
       
-      {hasPermission === null && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 text-white bg-gray-900">
-          <RefreshCw className="w-8 h-8 mb-4 text-gray-500 animate-spin" />
-          <p className="text-sm">Initializing camera...</p>
+      {hasPermission === false && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 text-white p-6 text-center backdrop-blur-sm">
+          <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
+            <Camera className="w-8 h-8 text-red-500" />
+          </div>
+          <p className="text-lg font-medium text-white mb-2">{error}</p>
+          <p className="text-sm text-gray-400 mb-6 max-w-sm">
+            Please allow camera access in your browser settings to scan items.
+          </p>
+          <button
+            onClick={() => setNonce(prev => prev + 1)}
+            className="flex items-center gap-2 bg-white text-black px-6 py-3 rounded-xl font-medium hover:bg-gray-100 transition shadow-lg"
+          >
+            <RefreshCw className="w-5 h-5" />
+            Try Again
+          </button>
         </div>
       )}
 
-      {/* The container for html5-qrcode video feed */}
-      <div id="qr-reader" ref={scannerRef} className="w-full h-full object-cover"></div>
-      
-      {/* Overlay guide */}
-      <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40 z-10">
-        <div className="w-full h-full border-2 border-green-500 rounded-lg relative">
-          <div className="absolute top-1/2 left-0 w-full h-[1px] bg-red-500/50"></div>
+      {hasPermission === null && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+            <p className="text-white/80 font-medium">Requesting camera access...</p>
+          </div>
         </div>
+      )}
+
+      {/* Frame overlay */}
+      <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40">
+        <div className="absolute inset-0 border-2 border-white/30" />
+        <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white -translate-x-1 -translate-y-1" />
+        <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white translate-x-1 -translate-y-1" />
+        <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white -translate-x-1 translate-y-1" />
+        <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white translate-x-1 translate-y-1" />
+        
+        {/* Laser line */}
+        <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-red-500/80 shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
       </div>
 
       <div className="absolute bottom-6 left-0 right-0 flex justify-center z-20 gap-3">
         <label className="bg-black/60 backdrop-blur-md text-white px-5 py-2.5 rounded-full flex items-center gap-2 cursor-pointer border border-white/20 hover:bg-black/80 transition shadow-lg">
           <ImagePlus className="w-5 h-5" />
           <span className="text-sm font-medium">Scan Photo</span>
-          <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileUpload}
+          />
         </label>
 
         <button 
@@ -230,4 +284,4 @@ export function Scanner({ onScan, isScanning }: ScannerProps) {
       </div>
     </div>
   );
-}
+};
