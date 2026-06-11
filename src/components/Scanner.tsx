@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import jsQR from 'jsqr';
 import { Camera, RefreshCw, ImagePlus, SwitchCamera, Flashlight, FlashlightOff } from 'lucide-react';
 
 interface ScannerProps {
@@ -8,8 +8,11 @@ interface ScannerProps {
 }
 
 export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
-  const html5QrCode = useRef<Html5Qrcode | null>(null);
-  const isTransitioning = useRef(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const requestRef = useRef<number | null>(null);
+  
   const [error, setError] = useState<string>('');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -26,179 +29,156 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
     onScanRef.current = onScan;
   }, [onScan]);
 
+  const stopStream = () => {
+    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => {
+            track.stop();
+            track.enabled = false;
+        });
+        streamRef.current = null;
+    }
+  };
+
   useEffect(() => {
-    let isSubscribed = true;
+    let isMounted = true;
+    if (!isScanning) {
+        stopStream();
+        return;
+    }
 
     const startScanner = async () => {
-      if (!isScanning) return;
-      
-      while (isTransitioning.current) {
-        await new Promise(r => setTimeout(r, 100));
-      }
-      if (!isSubscribed) return;
-      
-      isTransitioning.current = true;
+        stopStream();
+        setHasPermission(null);
+        setError('');
 
-      try {
-        if (html5QrCode.current?.isScanning) {
-          await html5QrCode.current.stop();
-        }
-      } catch (e) {
-        console.error('Failed to stop scanner before restart.', e);
-      }
-
-      try {
-        const devices = await Html5Qrcode.getCameras();
-        if (devices && devices.length > 0) {
-          if (isSubscribed) setHasPermission(true);
-
-          if (!html5QrCode.current) {
-            html5QrCode.current = new Html5Qrcode('reader');
-          }
-
-          if (!html5QrCode.current.isScanning) {
-            await html5QrCode.current.start(
-              { facingMode },
-              {
-                fps: 10,
-              },
-              (decodedText) => {
-                if (isSubscribed) {
-                  // Haptic feedback
-                  if (window.navigator && window.navigator.vibrate) {
-                    window.navigator.vibrate(100);
-                  }
-                  
-                  // Audio beep
-                  try {
-                    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-                    const oscillator = audioCtx.createOscillator();
-                    const gainNode = audioCtx.createGain();
-                    
-                    oscillator.connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                    
-                    oscillator.type = 'sine';
-                    oscillator.frequency.value = 800;
-                    gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-                    
-                    oscillator.start(audioCtx.currentTime);
-                    oscillator.stop(audioCtx.currentTime + 0.1);
-                  } catch (e) {
-                    console.warn('Audio feedback failed', e);
-                  }
-
-                  onScanRef.current(decodedText);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: facingMode,
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
                 }
-              },
-              (errorMessage) => {
-                // Ignore frequent scan failures
-              }
-            );
+            });
 
-            // Re-apply torch state if it was on
-            if (isTorchOn && facingMode === 'environment') {
-              try {
-                await html5QrCode.current.applyVideoConstraints({
-                  advanced: [{ torch: true } as any]
-                });
-              } catch (err) {
-                console.warn('Torch not supported or failed to re-apply', err);
-                setIsTorchOn(false);
-                localStorage.setItem('scanner_isTorchOn', 'false');
-              }
+            if (!isMounted) {
+                stream.getTracks().forEach(t => t.stop());
+                return;
             }
-          }
-        } else {
-          if (isSubscribed) {
-            setHasPermission(false);
-            setError('No camera found on this device');
-          }
+
+            streamRef.current = stream;
+            setHasPermission(true);
+
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                // Important: play() needs to be handled properly for iOS safari
+                videoRef.current.setAttribute('playsinline', 'true');
+                videoRef.current.play().catch(e => console.warn('Play interrupted', e));
+            }
+
+            // Sync torch state if possible
+            if (isTorchOn && facingMode === 'environment') {
+                const track = stream.getVideoTracks()[0];
+                if (track && 'applyConstraints' in track) {
+                    try {
+                        await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                    } catch (e) {
+                        setIsTorchOn(false);
+                    }
+                }
+            }
+
+            const tick = () => {
+                if (!isMounted) return;
+                const video = videoRef.current;
+                const canvas = canvasRef.current;
+                if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    if (ctx) {
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                            inversionAttempts: "dontInvert",
+                        });
+                        
+                        if (code && code.data && code.data.trim() !== '') {
+                            if (window.navigator?.vibrate) window.navigator.vibrate(100);
+                            onScanRef.current(code.data);
+                        }
+                    }
+                }
+                requestRef.current = requestAnimationFrame(tick);
+            };
+            requestRef.current = requestAnimationFrame(tick);
+        } catch (err: any) {
+            console.error('Camera access error:', err);
+            if (isMounted) {
+                setHasPermission(false);
+                setError(err.name === 'NotAllowedError' ? 'Camera permission denied or camera in use.' : 'Camera not found or inaccessible.');
+            }
         }
-      } catch (err) {
-        console.error(err);
-        if (isSubscribed) {
-          setHasPermission(false);
-          setError('Camera permission denied or camera is in use by another application');
-        }
-      } finally {
-        isTransitioning.current = false;
-      }
     };
 
     startScanner();
 
     return () => {
-      isSubscribed = false;
-      const stopScanner = async () => {
-        while (isTransitioning.current) {
-          await new Promise(r => setTimeout(r, 100));
-        }
-        isTransitioning.current = true;
-        try {
-          if (html5QrCode.current?.isScanning) {
-            await html5QrCode.current.stop();
-          }
-        } catch (e) {
-          console.error('Failed to stop scanner on cleanup.', e);
-        } finally {
-          isTransitioning.current = false;
-        }
-      };
-      stopScanner();
+        isMounted = false;
+        stopStream();
     };
   }, [isScanning, nonce, facingMode]);
 
   const toggleTorch = async () => {
-    if (html5QrCode.current && html5QrCode.current.isScanning) {
-      try {
-        const newTorchState = !isTorchOn;
-        await html5QrCode.current.applyVideoConstraints({
-          advanced: [{ torch: newTorchState } as any]
-        });
-        setIsTorchOn(newTorchState);
-        localStorage.setItem('scanner_isTorchOn', String(newTorchState));
-      } catch (err) {
-        console.error('Failed to toggle torch', err);
-        alert('Flashlight is not supported on this device/browser.');
-        setIsTorchOn(false);
-        localStorage.setItem('scanner_isTorchOn', 'false');
-      }
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (track) {
+        try {
+            const nextTorch = !isTorchOn;
+            await track.applyConstraints({ advanced: [{ torch: nextTorch } as any] });
+            setIsTorchOn(nextTorch);
+            localStorage.setItem('scanner_isTorchOn', String(nextTorch));
+        } catch (e) {
+            alert('Flashlight is not supported on this device/browser.');
+            setIsTorchOn(false);
+            localStorage.setItem('scanner_isTorchOn', 'false');
+        }
     }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      if (!html5QrCode.current) {
-        html5QrCode.current = new Html5Qrcode('reader');
-      }
-      try {
-        const decodedText = await html5QrCode.current.scanFile(file, true);
-        
-        // Success feedback
-        if (window.navigator && window.navigator.vibrate) {
-          window.navigator.vibrate(100);
-        }
-        try {
-          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const oscillator = audioCtx.createOscillator();
-          const gainNode = audioCtx.createGain();
-          oscillator.connect(gainNode);
-          gainNode.connect(audioCtx.destination);
-          oscillator.type = 'sine';
-          oscillator.frequency.value = 800;
-          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-          oscillator.start(audioCtx.currentTime);
-          oscillator.stop(audioCtx.currentTime + 0.1);
-        } catch (err) {
-          console.warn('Audio feedback failed', err);
-        }
-
-        onScanRef.current(decodedText);
-      } catch (err) {
-        setError('Could not read barcode from image. Please try another.');
-      }
+      const img = new Image();
+      img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              
+              // We try invert as well for static images since they might be dark themed
+              const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                  inversionAttempts: "attemptBoth"
+              });
+              
+              if (code && code.data) {
+                  if (window.navigator?.vibrate) window.navigator.vibrate(100);
+                  setError('');
+                  setHasPermission(true);
+                  onScanRef.current(code.data);
+              } else {
+                  setError('Could not read barcode from image. Please try a clearer picture.');
+                  setHasPermission(false);
+              }
+          }
+      };
+      img.onerror = () => {
+          setError('Could not load image file.');
+          setHasPermission(false);
+      };
+      img.src = URL.createObjectURL(file);
     }
   };
 
@@ -206,10 +186,16 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-black aspect-[4/3] w-full max-w-lg mx-auto shadow-2xl ring-1 ring-black/5">
-      <div id="reader" className="w-full h-full" />
+      <video
+        ref={videoRef}
+        className="w-full h-full object-cover"
+        playsInline
+        muted
+      />
+      <canvas ref={canvasRef} className="hidden" />
       
       {hasPermission === false && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 text-white p-6 text-center backdrop-blur-sm">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 text-white p-6 text-center backdrop-blur-sm z-30">
           <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
             <Camera className="w-8 h-8 text-red-500" />
           </div>
@@ -228,7 +214,7 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
       )}
 
       {hasPermission === null && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-30">
           <div className="flex flex-col items-center gap-4">
             <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
             <p className="text-white/80 font-medium">Requesting camera access...</p>
@@ -237,7 +223,7 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
       )}
 
       {/* Frame overlay */}
-      <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40">
+      <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40 z-10">
         <div className="absolute inset-0 border-2 border-white/30" />
         <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white -translate-x-1 -translate-y-1" />
         <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white translate-x-1 -translate-y-1" />
