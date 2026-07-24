@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Scanner } from '../components/Scanner';
 import { lookupUPC } from '../lib/api';
 import { useAppStore, ProductData, LocationData } from '../store';
-import { Loader2, MapPin, PackagePlus, Info, ChevronDown, ChevronUp, CheckCircle2, Search } from 'lucide-react';
+import { Loader2, PackagePlus, Info, ChevronDown, ChevronUp, CheckCircle2, Search } from 'lucide-react';
 
 export function ScanView() {
   const [isScanning, setIsScanning] = useState(true);
@@ -48,11 +48,11 @@ export function ScanView() {
     setIsLookingUp(true);
 
     try {
-      // 1. Get location (if permitted)
-      const location = await getGeoLocation();
-      
-      // 2. Lookup UPC
-      const product = await lookupUPC(decodedText);
+      // Run independent work in parallel so product results are shown sooner.
+      const [location, product] = await Promise.all([
+        getGeoLocation(),
+        lookupUPC(decodedText),
+      ]);
       setScannedProduct(product);
 
       // 3. Save to history
