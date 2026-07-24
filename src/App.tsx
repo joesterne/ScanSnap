@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Scanner } from './components/Scanner';
 
 function App() {

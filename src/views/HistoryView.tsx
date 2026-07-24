@@ -1,5 +1,5 @@
 import { useAppStore } from '../store';
-import { MapPin, Box, ArrowRight, Trash2, Share } from 'lucide-react';
+import { MapPin, Box, Trash2, Share } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export function HistoryView() {

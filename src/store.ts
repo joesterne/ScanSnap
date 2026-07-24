@@ -63,14 +63,19 @@ export const useAppStore = create<AppState>()(
         })),
       addToInventory: (product) =>
         set((state) => {
+          const now = Date.now();
           const existingItemIndex = state.inventory.findIndex(
             (item) => item.product.upc === product.upc
           );
 
           if (existingItemIndex >= 0) {
             const newInventory = [...state.inventory];
-            newInventory[existingItemIndex].quantity += 1;
-            newInventory[existingItemIndex].lastUpdated = Date.now();
+            const existingItem = newInventory[existingItemIndex];
+            newInventory[existingItemIndex] = {
+              ...existingItem,
+              quantity: existingItem.quantity + 1,
+              lastUpdated: now,
+            };
             return { inventory: newInventory };
           }
 
@@ -81,33 +86,39 @@ export const useAppStore = create<AppState>()(
                 id: crypto.randomUUID(),
                 product,
                 quantity: 1,
-                addedAt: Date.now(),
-                lastUpdated: Date.now(),
+                addedAt: now,
+                lastUpdated: now,
               },
             ],
           };
         }),
       updateInventoryQuantity: (id, delta) =>
-        set((state) => ({
-          inventory: state.inventory.map((item) => {
-            if (item.id === id) {
-              return {
-                ...item,
-                quantity: Math.max(0, item.quantity + delta),
-                lastUpdated: Date.now(),
-              };
-            }
-            return item;
-          }),
-        })),
+        set((state) => {
+          const now = Date.now();
+          return {
+            inventory: state.inventory.map((item) => {
+              if (item.id === id) {
+                return {
+                  ...item,
+                  quantity: Math.max(0, item.quantity + delta),
+                  lastUpdated: now,
+                };
+              }
+              return item;
+            }),
+          };
+        }),
       removeFromInventory: (id) =>
         set((state) => ({
           inventory: state.inventory.filter((item) => item.id !== id),
         })),
       removeMultipleFromInventory: (ids) =>
-        set((state) => ({
-          inventory: state.inventory.filter((item) => !ids.includes(item.id)),
-        })),
+        set((state) => {
+          const idsToRemove = new Set(ids);
+          return {
+            inventory: state.inventory.filter((item) => !idsToRemove.has(item.id)),
+          };
+        }),
     }),
     {
       name: 'scanory-storage',

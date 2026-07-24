@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useAppStore } from '../store';
-import { Box, Plus, Minus, Trash2, Search, ArrowDownAZ, ArrowUpZA, Clock, CalendarDays, ArrowUpDown, CheckSquare, Square, CheckCircle2, Circle, Share } from 'lucide-react';
+import { Box, Plus, Minus, Trash2, Search, ArrowDownAZ, Clock, CalendarDays, ArrowUpDown, CheckSquare, Square, CheckCircle2, Circle, Share } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ProductDetailView } from './ProductDetailView';
 
@@ -49,17 +49,6 @@ export function InventoryView() {
     inventory.find(i => i.id === selectedItemId), 
     [inventory, selectedItemId]
   );
-
-  const toggleBulkSelection = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newSelected = new Set(selectedBulkIds);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedBulkIds(newSelected);
-  };
 
   const handleSelectAll = () => {
     if (selectedBulkIds.size === filteredAndSortedInventory.length) {

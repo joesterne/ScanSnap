@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import jsQR from 'jsqr';
 import { Camera, RefreshCw, ImagePlus, SwitchCamera, Flashlight, FlashlightOff } from 'lucide-react';
 
@@ -7,11 +7,14 @@ interface ScannerProps {
   isScanning: boolean;
 }
 
-export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
+export function Scanner({ onScan, isScanning }: ScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const requestRef = useRef<number | null>(null);
+  const scanCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const scanContextRef = useRef<CanvasRenderingContext2D | null>(null);
+  const lastScanAtRef = useRef(0);
+  const hasDecodedRef = useRef(false);
   
   const [error, setError] = useState<string>('');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -25,12 +28,23 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
   });
 
   const onScanRef = useRef(onScan);
+
+  const getScanCanvas = () => {
+    if (!scanCanvasRef.current) {
+        scanCanvasRef.current = document.createElement('canvas');
+    }
+    return scanCanvasRef.current;
+  };
   useEffect(() => {
     onScanRef.current = onScan;
   }, [onScan]);
 
   const stopStream = () => {
-    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    if (requestRef.current) {
+        cancelAnimationFrame(requestRef.current);
+        requestRef.current = null;
+    }
+    hasDecodedRef.current = false;
     if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => {
             track.stop();
@@ -88,24 +102,44 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
                 }
             }
 
-            const tick = () => {
+            const tick = (now: number) => {
                 if (!isMounted) return;
+
+                if (now - lastScanAtRef.current < 150) {
+                    requestRef.current = requestAnimationFrame(tick);
+                    return;
+                }
+                lastScanAtRef.current = now;
+
                 const video = videoRef.current;
-                const canvas = canvasRef.current;
-                if (video && canvas && video.readyState === video.HAVE_ENOUGH_DATA) {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
+                    const canvas = getScanCanvas();
+                    const sourceWidth = video.videoWidth;
+                    const sourceHeight = video.videoHeight;
+                    const scale = Math.min(1, 640 / Math.max(sourceWidth, sourceHeight));
+                    const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+                    const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+                    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+                        canvas.width = targetWidth;
+                        canvas.height = targetHeight;
+                        scanContextRef.current = canvas.getContext('2d', { willReadFrequently: true });
+                    }
+
+                    const ctx = scanContextRef.current;
                     if (ctx) {
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+                        const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
                         const code = jsQR(imageData.data, imageData.width, imageData.height, {
                             inversionAttempts: "dontInvert",
                         });
                         
-                        if (code && code.data && code.data.trim() !== '') {
+                        if (code && code.data && code.data.trim() !== '' && !hasDecodedRef.current) {
+                            hasDecodedRef.current = true;
+                            stopStream();
                             if (window.navigator?.vibrate) window.navigator.vibrate(100);
                             onScanRef.current(code.data);
+                            return;
                         }
                     }
                 }
@@ -145,7 +179,7 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       const img = new Image();
@@ -192,8 +226,6 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
         playsInline
         muted
       />
-      <canvas ref={canvasRef} className="hidden" />
-      
       {hasPermission === false && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 text-white p-6 text-center backdrop-blur-sm z-30">
           <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
@@ -270,4 +302,4 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
       </div>
     </div>
   );
-};
+}
