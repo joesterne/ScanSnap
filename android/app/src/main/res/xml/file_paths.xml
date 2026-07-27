@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Only files deliberately staged in this subdirectory can be shared. -->
+    <!-- This internal cache remains in credential-encrypted app storage. -->
     <cache-path name="shared_images" path="shared-images/" />
 </paths>

@@ -3,6 +3,8 @@
 
     <application
         android:allowBackup="false"
+        android:defaultToDeviceProtectedStorage="false"
+        android:directBootAware="false"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
