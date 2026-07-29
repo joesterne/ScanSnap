@@ -18,3 +18,13 @@ View your app in AI Studio: https://ai.studio/apps/fd9c34fd-bcc0-4c7d-bdaf-04516
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Image data security
+
+Uploaded images are decoded from temporary in-memory object URLs and are never
+saved by the web application. On Android, any image deliberately staged for
+sharing is restricted to the app's internal cache. The application explicitly
+uses credential-encrypted storage and cannot run before the user unlocks the
+device, so cached image data remains protected by the user's device credential.
+Application backup is disabled to prevent that data from being exported through
+Android backup or device-transfer services.

@@ -7,6 +7,12 @@ interface ScannerProps {
   isScanning: boolean;
 }
 
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_PIXELS = 20_000_000;
+const MAX_SCAN_LENGTH = 256;
+
+const normalizeScan = (value: string) => value.trim().slice(0, MAX_SCAN_LENGTH);
+
 export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -103,9 +109,10 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
                             inversionAttempts: "dontInvert",
                         });
                         
-                        if (code && code.data && code.data.trim() !== '') {
+                        const decodedValue = code ? normalizeScan(code.data) : '';
+                        if (decodedValue) {
                             if (window.navigator?.vibrate) window.navigator.vibrate(100);
-                            onScanRef.current(code.data);
+                            onScanRef.current(decodedValue);
                         }
                     }
                 }
@@ -148,8 +155,23 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
+      e.target.value = '';
+
+      if (!file.type.startsWith('image/') || file.size > MAX_IMAGE_BYTES) {
+          setError('Please select an image smaller than 10 MB.');
+          setHasPermission(false);
+          return;
+      }
+
       const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
       img.onload = () => {
+          URL.revokeObjectURL(objectUrl);
+          if (img.width * img.height > MAX_IMAGE_PIXELS) {
+              setError('Image dimensions are too large to scan safely.');
+              setHasPermission(false);
+              return;
+          }
           const canvas = document.createElement('canvas');
           canvas.width = img.width;
           canvas.height = img.height;
@@ -163,11 +185,12 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
                   inversionAttempts: "attemptBoth"
               });
               
-              if (code && code.data) {
+              const decodedValue = code ? normalizeScan(code.data) : '';
+              if (decodedValue) {
                   if (window.navigator?.vibrate) window.navigator.vibrate(100);
                   setError('');
                   setHasPermission(true);
-                  onScanRef.current(code.data);
+                  onScanRef.current(decodedValue);
               } else {
                   setError('Could not read barcode from image. Please try a clearer picture.');
                   setHasPermission(false);
@@ -175,10 +198,11 @@ export const Scanner: React.FC<ScannerProps> = ({ onScan, isScanning }) => {
           }
       };
       img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
           setError('Could not load image file.');
           setHasPermission(false);
       };
-      img.src = URL.createObjectURL(file);
+      img.src = objectUrl;
     }
   };
 
